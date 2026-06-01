@@ -3,7 +3,7 @@ const { getWatchlist, getHistory } = require('./db');
 const ADDON_ID = 'com.kurror.stremio-profiles';
 
 function buildManifest(profile) {
-    const label = profile ? `${profile.avatar} ${profile.name}` : 'Selecciona un perfil';
+    const label = `${profile.avatar} ${profile.name}`;
     return {
         id: ADDON_ID,
         version: '1.0.0',
