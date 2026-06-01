@@ -1,0 +1,25 @@
+{
+  "name": "stremio-profiles",
+  "version": "1.0.0",
+  "description": "Stremio addon for multi-profile management with separate catalogs and watchlists",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kurror/stremio-profiles.git"
+  },
+  "keywords": ["stremio", "addon", "profiles"],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^9.6.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
