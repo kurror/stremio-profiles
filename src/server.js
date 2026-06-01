@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const db = require('./db');
-const { buildManifest, handleCatalog, handleMeta } = require('./addon');
+const { buildManifest, handleCatalog } = require('./addon');
 
 const app = express();
 app.use(express.json());
@@ -11,14 +11,13 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 const PORT = process.env.PORT || 7000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
-// ─── CORS for Stremio ───────────────────────────────────────────────
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
     next();
 });
 
-// ─── Addon routes (per profile) ─────────────────────────────────────
+// ─── Addon routes ────────────────────────────────────────────────────
 
 app.get('/:profileId/manifest.json', (req, res) => {
     const profile = db.getProfile(req.params.profileId);
@@ -26,38 +25,17 @@ app.get('/:profileId/manifest.json', (req, res) => {
     res.json(buildManifest(profile));
 });
 
-app.get('/:profileId/catalog/:type/:catalogId.json', async (req, res) => {
+app.get('/:profileId/catalog/:type/:catalogId.json', (req, res) => {
     const { profileId, type, catalogId } = req.params;
-    try {
-        const result = await handleCatalog(profileId, catalogId, type, req.query);
-        res.json(result);
-    } catch (e) {
-        console.error(e);
-        res.json({ metas: [] });
-    }
+    const result = handleCatalog(profileId, catalogId, type, req.query);
+    res.json(result);
 });
 
-app.get('/:profileId/catalog/:type/:catalogId/:extra.json', async (req, res) => {
+app.get('/:profileId/catalog/:type/:catalogId/:extra.json', (req, res) => {
     const { profileId, type, catalogId, extra } = req.params;
     const extraObj = Object.fromEntries(extra.split('&').map(p => p.split('=')));
-    try {
-        const result = await handleCatalog(profileId, catalogId, type, extraObj);
-        res.json(result);
-    } catch (e) {
-        console.error(e);
-        res.json({ metas: [] });
-    }
-});
-
-app.get('/:profileId/meta/:type/:id.json', async (req, res) => {
-    const { profileId, type, id } = req.params;
-    try {
-        const result = await handleMeta(profileId, type, id);
-        res.json(result);
-    } catch (e) {
-        console.error(e);
-        res.json({ meta: null });
-    }
+    const result = handleCatalog(profileId, catalogId, type, extraObj);
+    res.json(result);
 });
 
 // ─── Web UI API ──────────────────────────────────────────────────────
@@ -91,7 +69,6 @@ app.delete('/api/profiles/:id', (req, res) => {
     res.json({ ok: true });
 });
 
-// PIN verify
 app.post('/api/profiles/:id/verify-pin', (req, res) => {
     const profile = db.getProfile(req.params.id);
     if (!profile) return res.status(404).json({ error: 'No encontrado' });
@@ -121,7 +98,7 @@ app.post('/api/profiles/:id/watchlist', (req, res) => {
 });
 
 app.delete('/api/profiles/:id/watchlist/:itemId', (req, res) => {
-    db.removeFromWatchlist(req.params.id, req.params.itemId);
+    db.removeFromWatchlist(req.params.id, decodeURIComponent(req.params.itemId));
     res.json({ ok: true });
 });
 
@@ -142,5 +119,4 @@ app.delete('/api/profiles/:id/history', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Stremio Profiles addon running on ${BASE_URL}`);
-    console.log(`Web UI: ${BASE_URL}/`);
 });

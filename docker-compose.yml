@@ -10,5 +10,4 @@ services:
     environment:
       - PORT=7000
       - BASE_URL=${BASE_URL:-http://100.118.11.112:7000}
-      - TMDB_API_KEY=${TMDB_API_KEY:-}
       - DB_PATH=/app/data/profiles.db
