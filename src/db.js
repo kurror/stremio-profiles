@@ -27,10 +27,10 @@ function migrate(db) {
             created_at INTEGER DEFAULT (unixepoch())
         );
 
-        CREATE TABLE IF NOT EXISTS profile_genres (
+        CREATE TABLE IF NOT EXISTS sessions (
+            device_ip TEXT PRIMARY KEY,
             profile_id TEXT NOT NULL,
-            genre TEXT NOT NULL,
-            PRIMARY KEY (profile_id, genre),
+            updated_at INTEGER DEFAULT (unixepoch()),
             FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
         );
 
@@ -90,17 +90,21 @@ function deleteProfile(id) {
     getDb().prepare('DELETE FROM profiles WHERE id = ?').run(id);
 }
 
-// Genres
-function getGenres(profileId) {
-    return getDb().prepare('SELECT genre FROM profile_genres WHERE profile_id = ?').all(profileId).map(r => r.genre);
+// Sessions — one active profile per device (identified by Tailscale IP)
+function getActiveProfile(deviceIp) {
+    const session = getDb().prepare('SELECT profile_id FROM sessions WHERE device_ip = ?').get(deviceIp);
+    if (!session) return null;
+    return getProfile(session.profile_id);
 }
 
-function setGenres(profileId, genres) {
-    const db = getDb();
-    db.prepare('DELETE FROM profile_genres WHERE profile_id = ?').run(profileId);
-    const insert = db.prepare('INSERT INTO profile_genres (profile_id, genre) VALUES (?, ?)');
-    const tx = db.transaction((genres) => { for (const g of genres) insert.run(profileId, g); });
-    tx(genres);
+function setActiveProfile(deviceIp, profileId) {
+    getDb().prepare(
+        'INSERT OR REPLACE INTO sessions (device_ip, profile_id, updated_at) VALUES (?, ?, unixepoch())'
+    ).run(deviceIp, profileId);
+}
+
+function clearSession(deviceIp) {
+    getDb().prepare('DELETE FROM sessions WHERE device_ip = ?').run(deviceIp);
 }
 
 // Watchlist
@@ -119,7 +123,7 @@ function removeFromWatchlist(profileId, itemId) {
 }
 
 // History
-function getHistory(profileId, limit = 50) {
+function getHistory(profileId, limit = 200) {
     return getDb().prepare('SELECT * FROM history WHERE profile_id = ? ORDER BY watched_at DESC LIMIT ?').all(profileId, limit);
 }
 
@@ -136,7 +140,7 @@ function clearHistory(profileId) {
 
 module.exports = {
     listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
-    getGenres, setGenres,
+    getActiveProfile, setActiveProfile, clearSession,
     getWatchlist, addToWatchlist, removeFromWatchlist,
     getHistory, addToHistory, clearHistory,
 };

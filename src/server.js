@@ -17,51 +17,45 @@ app.use((req, res, next) => {
     next();
 });
 
-// ─── Addon routes ────────────────────────────────────────────────────
+function deviceIp(req) {
+    return req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+}
 
-app.get('/:profileId/manifest.json', (req, res) => {
-    const profile = db.getProfile(req.params.profileId);
-    if (!profile) return res.status(404).json({ error: 'Perfil no encontrado' });
+// ─── Single addon URL (device-session based) ─────────────────────────
+
+app.get('/manifest.json', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
     res.json(buildManifest(profile));
 });
 
-app.get('/:profileId/catalog/:type/:catalogId.json', (req, res) => {
-    const { profileId, type, catalogId } = req.params;
-    const result = handleCatalog(profileId, catalogId, type, req.query);
-    res.json(result);
+app.get('/catalog/:type/:catalogId.json', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.json({ metas: [] });
+    res.json(handleCatalog(profile.id, req.params.catalogId, req.params.type, req.query));
 });
 
-app.get('/:profileId/catalog/:type/:catalogId/:extra.json', (req, res) => {
-    const { profileId, type, catalogId, extra } = req.params;
-    const extraObj = Object.fromEntries(extra.split('&').map(p => p.split('=')));
-    const result = handleCatalog(profileId, catalogId, type, extraObj);
-    res.json(result);
+app.get('/catalog/:type/:catalogId/:extra.json', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.json({ metas: [] });
+    const extraObj = Object.fromEntries(req.params.extra.split('&').map(p => p.split('=')));
+    res.json(handleCatalog(profile.id, req.params.catalogId, req.params.type, extraObj));
 });
 
-// ─── Web UI API ──────────────────────────────────────────────────────
+// ─── Profile management API ───────────────────────────────────────────
 
 app.get('/api/profiles', (req, res) => {
-    const profiles = db.listProfiles().map(p => ({
-        ...p,
-        pin: p.pin ? '****' : null,
-        installUrl: `${BASE_URL}/${p.id}/manifest.json`,
-        stremioUrl: `stremio://${BASE_URL.replace(/^https?:\/\//, '')}/${p.id}/manifest.json`,
-    }));
-    res.json(profiles);
+    res.json(db.listProfiles().map(p => ({ ...p, pin: p.pin ? true : false })));
 });
 
 app.post('/api/profiles', (req, res) => {
     const { name, avatar, pin } = req.body;
     if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-    const profile = db.createProfile({ name, avatar, pin });
-    res.json({ ...profile, installUrl: `${BASE_URL}/${profile.id}/manifest.json` });
+    res.json(db.createProfile({ name, avatar, pin }));
 });
 
 app.put('/api/profiles/:id', (req, res) => {
-    const profile = db.getProfile(req.params.id);
-    if (!profile) return res.status(404).json({ error: 'No encontrado' });
-    const updated = db.updateProfile(req.params.id, req.body);
-    res.json(updated);
+    if (!db.getProfile(req.params.id)) return res.status(404).json({ error: 'No encontrado' });
+    res.json(db.updateProfile(req.params.id, req.body));
 });
 
 app.delete('/api/profiles/:id', (req, res) => {
@@ -69,54 +63,73 @@ app.delete('/api/profiles/:id', (req, res) => {
     res.json({ ok: true });
 });
 
-app.post('/api/profiles/:id/verify-pin', (req, res) => {
-    const profile = db.getProfile(req.params.id);
-    if (!profile) return res.status(404).json({ error: 'No encontrado' });
-    if (!profile.pin) return res.json({ ok: true });
-    const ok = profile.pin === String(req.body.pin || '');
-    res.json({ ok });
+// ─── Session: select active profile ──────────────────────────────────
+
+app.get('/api/session', (req, res) => {
+    const ip = deviceIp(req);
+    const profile = db.getActiveProfile(ip);
+    res.json(profile ? { ...profile, pin: profile.pin ? true : false } : null);
 });
 
-// Genres
-app.get('/api/profiles/:id/genres', (req, res) => {
-    res.json(db.getGenres(req.params.id));
+app.post('/api/session', (req, res) => {
+    const { profileId, pin } = req.body;
+    const profile = db.getProfile(profileId);
+    if (!profile) return res.status(404).json({ error: 'Perfil no encontrado' });
+    if (profile.pin && profile.pin !== String(pin || '')) {
+        return res.status(401).json({ error: 'PIN incorrecto' });
+    }
+    db.setActiveProfile(deviceIp(req), profileId);
+    res.json({ ok: true, profile: { ...profile, pin: profile.pin ? true : false } });
 });
 
-app.put('/api/profiles/:id/genres', (req, res) => {
-    db.setGenres(req.params.id, req.body.genres || []);
+app.delete('/api/session', (req, res) => {
+    db.clearSession(deviceIp(req));
     res.json({ ok: true });
 });
 
-// Watchlist
-app.get('/api/profiles/:id/watchlist', (req, res) => {
-    res.json(db.getWatchlist(req.params.id));
+// ─── Watchlist & history ──────────────────────────────────────────────
+
+app.get('/api/watchlist', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.status(401).json({ error: 'Sin perfil activo' });
+    res.json(db.getWatchlist(profile.id));
 });
 
-app.post('/api/profiles/:id/watchlist', (req, res) => {
-    db.addToWatchlist(req.params.id, req.body);
+app.post('/api/watchlist', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.status(401).json({ error: 'Sin perfil activo' });
+    db.addToWatchlist(profile.id, req.body);
     res.json({ ok: true });
 });
 
-app.delete('/api/profiles/:id/watchlist/:itemId', (req, res) => {
-    db.removeFromWatchlist(req.params.id, decodeURIComponent(req.params.itemId));
+app.delete('/api/watchlist/:itemId', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.status(401).json({ error: 'Sin perfil activo' });
+    db.removeFromWatchlist(profile.id, decodeURIComponent(req.params.itemId));
     res.json({ ok: true });
 });
 
-// History
-app.get('/api/profiles/:id/history', (req, res) => {
-    res.json(db.getHistory(req.params.id));
+app.get('/api/history', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.status(401).json({ error: 'Sin perfil activo' });
+    res.json(db.getHistory(profile.id));
 });
 
-app.post('/api/profiles/:id/history', (req, res) => {
-    db.addToHistory(req.params.id, req.body);
+app.post('/api/history', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.status(401).json({ error: 'Sin perfil activo' });
+    db.addToHistory(profile.id, req.body);
     res.json({ ok: true });
 });
 
-app.delete('/api/profiles/:id/history', (req, res) => {
-    db.clearHistory(req.params.id);
+app.delete('/api/history', (req, res) => {
+    const profile = db.getActiveProfile(deviceIp(req));
+    if (!profile) return res.status(401).json({ error: 'Sin perfil activo' });
+    db.clearHistory(profile.id);
     res.json({ ok: true });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Stremio Profiles addon running on ${BASE_URL}`);
+    console.log(`Stremio Profiles running on ${BASE_URL}`);
+    console.log(`Install URL: stremio://${BASE_URL.replace(/^https?:\/\//, '')}/manifest.json`);
 });
